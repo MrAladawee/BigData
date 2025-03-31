@@ -10,11 +10,7 @@ workers = [
     ('127.0.0.1', 5002)
 ]
 
-
 def send_command(address, command_dict):
-    """
-    Открывает соединение с указанным адресом, отправляет команду (JSON) и ожидает ответ (до символа новой строки).
-    """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect(address)
     message = json.dumps(command_dict) + "\n"
@@ -31,9 +27,6 @@ def send_command(address, command_dict):
 
 
 def distribute_data(data):
-    """
-    Разбивает исходные данные (список записей) на равные части и отправляет их Worker Node через команду "store_data".
-    """
     num_workers = len(workers)
     chunk_size = len(data) // num_workers
     chunks = []
@@ -53,56 +46,20 @@ def distribute_data(data):
         responses.append(res)
     return responses
 
-
-def run_algorithm():
-    """
-    Запускает стандартную Map-задачу ("map_task") на всех Worker Node,
-    собирает результаты и выполняет Reduce-задачу (агрегация сумм и подсчет общего количества).
-    """
-    map_results = []
-    for address in workers:
-        command = {"command": "map_task"}
-        res = send_command(address, command)
-        map_results.append(res.get("map_result", {}))
-
-    total_sum = sum(item.get("sum", 0) for item in map_results)
-    total_count = sum(item.get("count", 0) for item in map_results)
-    average = total_sum / total_count if total_count > 0 else None
-
-    return {
-        "total_sum": total_sum,
-        "total_count": total_count,
-        "average": average,
-        "map_results": map_results
-    }
-
-
 def p2_run():
     """
-    Реализация Пункта 2 (выборочное среднее для CSV-файла).
+    Реализация Пункта 2 (выборочное среднее CSV-файла).
     """
     csv_data = pd.read_csv('p2.csv')['x_value'].tolist()
 
-    num_workers = len(workers)
-    chunk_size = len(csv_data) // num_workers
-    chunks = []
-    for i in range(num_workers):
-        if i == num_workers - 1:
-            chunk = csv_data[i * chunk_size:]
-        else:
-            chunk = csv_data[i * chunk_size:(i + 1) * chunk_size]
-        chunks.append(chunk)
-
-    responses = []
-    for i, address in enumerate(workers):
-        command = {"command": "store_data_p2", "data": chunks[i]}
-        res = send_command(address, command)
-        responses.append(res)
+    # Используем функцию distribute_data для распределения данных по рабочим узлам
+    responses = distribute_data(csv_data)
     print("Пункт 2. Данные распределены:", responses)
 
+    # Reduce
     map_results = []
     for address in workers:
-        command = {"command": "p2_map"}
+        command = {"command": "p2_map"}  # Map
         res = send_command(address, command)
         map_results.append(res.get("map_result", {}))
 
@@ -125,14 +82,6 @@ def p2_run():
 
 
 def p3_run():
-    """
-    Реализация Пункта 3 (гистограмма для CSV-файла).
-      1. Имитируется CSV-файл p3.csv: единственный столбец "x" – список чисел.
-      2. Данные распределяются между Worker Node через команду "store_data_p3".
-      3. Каждому Worker отправляется команда "p3_map" для вычисления локальной гистограммы.
-         Worker вычисляет гистограмму по интервалам с шагом 5.
-      4. Master собирает локальные гистограммы, суммирует их и вычисляет итоговую гистограмму.
-    """
     csv_data = pd.read_csv('p3.csv')['x_value'].tolist()
 
     # Нахождение минимального и максимального значения в данных
@@ -140,31 +89,16 @@ def p3_run():
     max_value = max(csv_data)
 
     # Создаем интервалы с шагом 5
-    bins = [(i, i + 5) for i in range(int(min_value) // 5 * 5, int(max_value) // 5 * 5 + 1, 5)]
+    bins = [(i, i + 5) for i in range(int(min_value) // 5 * 5, (int(max_value) // 5 + 1)* 5, 5)]
 
-    # Распределяем данные по worker'ам
-    num_workers = len(workers)
-    chunk_size = len(csv_data) // num_workers
-    chunks = []
-    for i in range(num_workers):
-        if i == num_workers - 1:
-            chunk = csv_data[i * chunk_size:]
-        else:
-            chunk = csv_data[i * chunk_size:(i + 1) * chunk_size]
-        chunks.append(chunk)
-
-    # Отправляем данные worker'ам
-    responses = []
-    for i, address in enumerate(workers):
-        command = {"command": "store_data_p3", "data": chunks[i]}
-        res = send_command(address, command)
-        responses.append(res)
+    # Используем функцию distribute_data для распределения данных по рабочим узлам
+    responses = distribute_data(csv_data)
     print("Пункт 3. Данные распределены:", responses)
 
-    # Запускаем Map-задачу для Пункта 3: каждый Worker вычисляет локальную гистограмму
+    # Reduce
     map_results = []
     for address in workers:
-        command = {"command": "p3_map"}
+        command = {"command": "p3_map"}  # Map
         res = send_command(address, command)
         map_results.append(res.get("map_result", {}))
 
@@ -179,17 +113,15 @@ def p3_run():
             total_count += count
 
     result = {
-        "global_histogram_counts": global_hist,  # Исправили ключ
+        "global_histogram_counts": global_hist,
         "total_count": total_count,
         "map_results": map_results
     }
     return result
 
-def plot_histogram(global_hist):
-    """
-    Строит и отображает гистограмму на основе значений из global_hist.
-    :param global_hist: Словарь {интервал: количество элементов}
-    """
+def plot_mapreduce_histogram(global_hist):
+    #global_hist: Словарь {интервал: количество элементов}
+
     bins = list(global_hist.keys())  # Метки интервалов
     counts = list(global_hist.values())  # Количества по каждому интервалу
 
@@ -203,8 +135,49 @@ def plot_histogram(global_hist):
 
     plt.show()
 
+def plot_original_histogram(data):
+    """
+    Строит гистограмму по исходным данным, вручную создавая интервалы
+    и подсчитывая их частоты.
+    """
+    # Читаем данные из CSV
+    # Обратите внимание, что предполагается, что данные находятся в колонке 'x_value'
+    x_values = data['x_value'].tolist()
+
+    # Получаем минимальное и максимальное значения для данных
+    min_value = min(x_values)
+    max_value = max(x_values)
+
+    # Создаем интервалы с шагом 5
+    bins = []
+    start = int(min_value) // 5 * 5  # округление вниз до ближайшего кратного 5
+    end = (int(max_value) // 5 + 1) * 5  # округление вверх до ближайшего кратного 5
+
+    for i in range(start, end, 5):
+        bins.append((i, i + 5))
+
+    # Инициализируем гистограмму для подсчета частот
+    hist = {f"{b[0]}-{b[1]}": 0 for b in bins}
+
+    # Подсчитываем количество элементов в каждом интервале
+    for x in x_values:
+        for b in bins:
+            if b[0] <= x < b[1]:
+                hist[f"{b[0]}-{b[1]}"] += 1
+                break  # Если число попало в интервал, выходим из цикла
+
+    # Визуализация
+    plt.figure(figsize=(8, 5))
+    plt.bar(hist.keys(), hist.values(), color='blue', alpha=0.7, edgecolor='black')
+
+    plt.xlabel("Интервалы значений X")
+    plt.ylabel("Количество элементов")
+    plt.title("Гистограмма исходных данных")
+    plt.grid(axis='y', linestyle='--', alpha=0.6)
+    plt.show()
+
 if __name__ == "__main__":
-    # Пример запуска стандартной MapReduce задачи
+    ''' Тестовый пример
     test_data = [
         {"value": 10},
         {"value": 20},
@@ -223,6 +196,7 @@ if __name__ == "__main__":
     result = run_algorithm()
     print("Результат Reduce-задачи:")
     print(result)
+    '''
 
     print("\nЗапуск задачи Пункт 2: выборочное среднее...")
     p2_result = p2_run()
@@ -233,9 +207,9 @@ if __name__ == "__main__":
     p3_result = p3_run()
     print("Результат задачи Пункт 3:")
     print(p3_result)
-    # Используем 'global_histogram_counts' для построения гистограммы
-    plot_histogram(p3_result["global_histogram_counts"])
+    # Используем 'global_histogram_counts' для построения гистограммы из собранных результатов
+    plot_mapreduce_histogram(p3_result["global_histogram_counts"])
 
-    plt.figure(figsize=(8,5))
-    plt.hist(pd.read_csv('p3.csv')['x_value'].tolist(), bins = 5)
-    plt.show()
+    # Сверка с оригиналом
+    data = pd.read_csv('p3.csv')
+    plot_original_histogram(data)
