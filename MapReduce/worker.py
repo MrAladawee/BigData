@@ -13,6 +13,9 @@ def get_p2_filename(port):
 def get_p3_filename(port):
     return f"p3_worker_data_{port}.json"
 
+def get_p4_filename(port):
+    return f"p4_worker_data_{port}.json"
+
 def save_data(data, filename):
     with open(filename, "w") as f:
         json.dump(data, f)
@@ -65,33 +68,54 @@ def handle_client(conn, addr, port):
             save_data(d, get_p3_filename(port))
             response = {"status": "Data p3 отправлены", "records": len(d)}
 
+
         elif cmd == "p3_map":
+
             stored = load_data(get_p3_filename(port))
+
             if not stored:
                 response = {"error": "Нет данных по p3_map"}
+
                 conn.sendall(json.dumps(response).encode('utf-8'))
+
                 return
 
-            min_value = min(stored)
-            max_value = max(stored)
+            # Фиксированные интервалы: от 1 до 8 (всего 8 интервалов)
 
-            bins = []
-
-            start = int(min_value) // 5 * 5
-            end = (int(max_value) // 5 + 1) * 5
-
-            for i in range(start, end, 5):
-                bins.append((i, i + 5))
+            bins = [(i, i + 1) for i in range(1, 9)]
 
             local_hist = {f"{b[0]}-{b[1]}": 0 for b in bins}
 
             for x in stored:
+
                 for b in bins:
-                    if b[0] < x <= b[1]:
+
+                    if b[0] <= x < b[1]:
                         local_hist[f"{b[0]}-{b[1]}"] += 1
-                        break
+
+                        break  # нашли подходящий интервал, выходим
 
             response = {"status": "p3 map выполнен", "map_result": local_hist}
+
+        elif cmd == "store_data_p4":
+            d = command.get("data", [])
+            save_data(d, get_p4_filename(port))
+            response = {"status": "Data p4 сохранены", "records": len(d)}
+
+        elif cmd == "p4_map":
+            stored = load_data(get_p4_filename(port))
+            local_map = {}
+
+            for record in stored:
+                v = record.get("v")
+                s = record.get("s")
+                label = "R" if s == 0 else "S"
+                key = str(v)
+                if key not in local_map:
+                    local_map[key] = []
+                local_map[key].append(label)
+
+            response = {"status": "p4 map выполнен", "map_result": local_map}
 
         else:
             response = {"error": "Ошиба"}
