@@ -248,6 +248,89 @@ def plot_original_histogram(data):
     plt.tight_layout()
     plt.show()
 
+def send_p5_data_to_workers(p5_data):
+    num_workers = len(workers)
+    chunk_size = len(p5_data) // num_workers
+    chunks = []
+
+    for i in range(num_workers):
+        if i == num_workers - 1:
+            chunk = p5_data[i * chunk_size:]
+        else:
+            chunk = p5_data[i * chunk_size:(i + 1) * chunk_size]
+        chunks.append(chunk)
+
+    responses = []
+    for i, address in enumerate(workers):
+        command = {"command": "store_data_p5", "data": chunks[i]}
+        res = send_command(address, command)
+        responses.append(res)
+    return responses
+
+
+def p5_run():
+    """
+    MapReduce для перемножения матриц.
+    """
+    map_results = []
+    for address in workers:
+        command = {"command": "p5_map"}
+        res = send_command(address, command)
+        map_results.extend(res.get("map_result", []))  # Список пар (key, value)
+
+    # Сгруппировать по ключу (i, k)
+    grouped = {}
+    for item in map_results:
+        key = tuple(item[0])  # (i, k)
+        val = tuple(item[1])  # ('M'/'N', j, value)
+        if key not in grouped:
+            grouped[key] = []
+        grouped[key].append(val)
+
+    result_matrix = {}
+
+    for (i, k), values in grouped.items():
+        M_values = {}
+        N_values = {}
+
+        for origin, j, v in values:
+            if origin == 'M':
+                M_values[j] = v
+            elif origin == 'N':
+                N_values[j] = v
+
+        sum_prod = 0
+        for j in set(M_values.keys()) & set(N_values.keys()):
+            sum_prod += M_values[j] * N_values[j]
+
+        result_matrix[(i, k)] = sum_prod
+
+    return result_matrix
+
+def print_pretty_matrix(matrix, rows=14, cols=9):
+    print("\nРезультирующая матрица P (14x9):\n")
+
+    # Заголовок
+    header = ["     "] + [f"{j:>8}" for j in range(1, cols + 1)]
+    print("".join(header))
+    print("     " + "--------" * cols)
+
+    for i in range(1, rows + 1):
+        row_vals = []
+        for j in range(1, cols + 1):
+            val = matrix.get((i, j), 0)
+            row_vals.append(f"{val:8.2f}")
+        print(f"{i:>3} |" + "".join(row_vals))
+
+def print_simple_matrix(matrix, rows=14, cols=9):
+    print("\nМатрица P:")
+    for i in range(1, rows + 1):
+        row = []
+        for j in range(1, cols + 1):
+            val = matrix.get((i, j), 0)
+            row.append(f"{val:.2f}")
+        print("\t".join(row))
+
 if __name__ == "__main__":
     print("\nПодготовка: Отправка данных для Пункт 2...")
     p2_data = pd.read_csv('p2.csv')['x_value'].tolist()
@@ -285,3 +368,16 @@ if __name__ == "__main__":
     p4_result = p4_run()
     print("Результат задачи Пункт 4 (разность S0 - S1):")
     print(p4_result["difference"])
+
+    print("\nПодготовка: Отправка данных для Пункт 5...")
+    p5_df = pd.read_csv('p5.csv')
+    p5_data = p5_df.to_dict(orient='records')
+    p5_send_result = send_p5_data_to_workers(p5_data)
+    print("Данные P5 отправлены:", p5_send_result)
+
+    print("\nЗапуск задачи Пункт 5: умножение матриц...")
+    p5_result = p5_run()
+    print("Результат перемножения матриц (непустые элементы):")
+    for key in sorted(p5_result.keys()):
+        print(f"P{key} = {p5_result[key]}")
+    print_simple_matrix(p5_result)
