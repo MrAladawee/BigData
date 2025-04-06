@@ -16,6 +16,9 @@ def get_p3_filename(port):
 def get_p4_filename(port):
     return f"p4_worker_data_{port}.json"
 
+def get_p5_filename(port):
+    return f"p5_worker_data_{port}.json"
+
 def save_data(data, filename):
     with open(filename, "w") as f:
         json.dump(data, f)
@@ -116,6 +119,30 @@ def handle_client(conn, addr, port):
                 local_map[key].append(label)
 
             response = {"status": "p4 map выполнен", "map_result": local_map}
+
+        elif cmd == "store_data_p5":
+            d = command.get("data", [])
+            save_data(d, get_p5_filename(port))
+            response = {"status": "Data p5 сохранены", "records": len(d)}
+
+        elif cmd == "p5_map":
+            stored = load_data(get_p5_filename(port))
+            map_result = []
+            for row in stored:
+                m = row["m"]
+                i = row["i"]
+                j = row["j"]
+                v = row["v"]
+                if m == 0:
+                    # элемент из M0 (размер 14x7), j — от 1 до 7, k — от 1 до 9
+                    for k in range(1, 10):  # k=1..9
+                        map_result.append([[i, k], ['M', j, v]])
+                elif m == 1:
+                    # элемент из M1 (размер 7x9), i — от 1 до 14
+                    for row_i in range(1, 15):  # i=1..14
+                        map_result.append([[row_i, j], ['N', i, v]])
+
+            response = {"status": "p5 map выполнен", "map_result": map_result}
 
         else:
             response = {"error": "Ошиба"}
