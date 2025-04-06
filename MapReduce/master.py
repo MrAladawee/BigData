@@ -46,17 +46,33 @@ def distribute_data(data):
         responses.append(res)
     return responses
 
+def send_p2_data_to_workers(data):
+    """
+    Отправляет данные для задачи Пункт 2 (выборочное среднее) на воркеры.
+    """
+    num_workers = len(workers)
+    chunk_size = len(data) // num_workers
+    chunks = []
+
+    for i in range(num_workers):
+        if i == num_workers - 1:
+            chunk = data[i * chunk_size:]
+        else:
+            chunk = data[i * chunk_size:(i + 1) * chunk_size]
+        chunks.append(chunk)
+
+    responses = []
+    for i, address in enumerate(workers):
+        command = {"command": "store_data_p2", "data": chunks[i]}
+        res = send_command(address, command)
+        responses.append(res)
+    return responses
+
 def p2_run():
     """
-    Реализация Пункта 2 (выборочное среднее CSV-файла).
+    Выполняет MapReduce задачу по вычислению среднего значения.
+    Предполагается, что данные уже были загружены через send_p2_data_to_workers().
     """
-    csv_data = pd.read_csv('p2.csv')['x_value'].tolist()
-
-    # Используем функцию distribute_data для распределения данных по рабочим узлам
-    responses = distribute_data(csv_data)
-    print("Пункт 2. Данные распределены:", responses)
-
-    # Reduce
     map_results = []
     for address in workers:
         command = {"command": "p2_map"}  # Map
@@ -80,37 +96,50 @@ def p2_run():
     }
     return result
 
+def send_p3_data_to_workers(data):
+    """
+    Отправляет данные для задачи Пункт 3 (гистограмма) на воркеры.
+    """
+    num_workers = len(workers)
+    chunk_size = len(data) // num_workers
+    chunks = []
+
+    for i in range(num_workers):
+        if i == num_workers - 1:
+            chunk = data[i * chunk_size:]
+        else:
+            chunk = data[i * chunk_size:(i + 1) * chunk_size]
+        chunks.append(chunk)
+
+    responses = []
+    for i, address in enumerate(workers):
+        command = {"command": "store_data_p3", "data": chunks[i]}
+        res = send_command(address, command)
+        responses.append(res)
+    return responses
 
 def p3_run():
-    csv_data = pd.read_csv('p3.csv')['x_value'].tolist()
+    """
+    Выполняет MapReduce задачу по построению гистограммы.
+    Предполагается, что данные уже были загружены через send_p3_data_to_workers().
+    """
+    # Фиксированные интервалы 1–8: [1,2), [2,3), ..., [8,9)
+    bins = [(i, i + 1) for i in range(1, 9)]
 
-    # Нахождение минимального и максимального значения в данных
-    min_value = min(csv_data)
-    max_value = max(csv_data)
-
-    # Создаем интервалы с шагом 5
-    bins = [(i, i + 5) for i in range(int(min_value) // 5 * 5, (int(max_value) // 5 + 1)* 5, 5)]
-
-    # Используем функцию distribute_data для распределения данных по рабочим узлам
-    responses = distribute_data(csv_data)
-    print("Пункт 3. Данные распределены:", responses)
-
-    # Reduce
     map_results = []
     for address in workers:
-        command = {"command": "p3_map"}  # Map
+        command = {"command": "p3_map"}
         res = send_command(address, command)
         map_results.append(res.get("map_result", {}))
 
-    # Инициализируем гистограмму по динамически вычисленным интервалам
     global_hist = {f"{b[0]}-{b[1]}": 0 for b in bins}
     total_count = 0
 
-    # Суммируем локальные гистограммы от всех workers
     for local_hist in map_results:
         for bin_key, count in local_hist.items():
-            global_hist[bin_key] += count
-            total_count += count
+            if bin_key in global_hist:
+                global_hist[bin_key] += count
+                total_count += count
 
     result = {
         "global_histogram_counts": global_hist,
@@ -119,97 +148,140 @@ def p3_run():
     }
     return result
 
-def plot_mapreduce_histogram(global_hist):
-    #global_hist: Словарь {интервал: количество элементов}
 
-    bins = list(global_hist.keys())  # Метки интервалов
-    counts = list(global_hist.values())  # Количества по каждому интервалу
+def send_p4_data_to_workers(p4_data):
+    """
+    Распределяет данные из p4.csv между воркерами.
+    Каждая запись — словарь {"s": 0 или 1, "v": значение}
+    """
+    num_workers = len(workers)
+    chunk_size = len(p4_data) // num_workers
+    chunks = []
+
+    for i in range(num_workers):
+        if i == num_workers - 1:
+            chunk = p4_data[i * chunk_size:]
+        else:
+            chunk = p4_data[i * chunk_size:(i + 1) * chunk_size]
+        chunks.append(chunk)
+
+    responses = []
+    for i, address in enumerate(workers):
+        command = {"command": "store_data_p4", "data": chunks[i]}
+        res = send_command(address, command)
+        responses.append(res)
+    return responses
+
+
+def p4_run():
+    """
+    Запускает MapReduce-задачу по вычислению разности множеств S0 - S1.
+    """
+    map_results = []
+    for address in workers:
+        command = {"command": "p4_map"}
+        res = send_command(address, command)
+        map_results.append(res.get("map_result", {}))
+
+    combined = {}
+    for local_map in map_results:
+        for v_str, source_list in local_map.items():
+            if v_str not in combined:
+                combined[v_str] = []
+            combined[v_str].extend(source_list)
+
+    result_diff = [int(v) for v, sources in combined.items() if sources == ["R"]]
+
+    return {
+        "difference": sorted(result_diff),
+        "intermediate": combined
+    }
+
+def plot_mapreduce_histogram(global_hist):
+    """
+    Визуализирует гистограмму, собранную с помощью MapReduce.
+    global_hist: словарь {интервал: количество элементов}, например {'1-2': 5, ..., '8-9': 3}
+    """
+
+    # Сортируем ключи по порядку чисел
+    sorted_bins = sorted(global_hist.keys(), key=lambda x: int(x.split('-')[0]))
+    counts = [global_hist[b] for b in sorted_bins]
 
     plt.figure(figsize=(8, 5))
-    plt.bar(bins, counts, color='blue', alpha=0.7, edgecolor='black')
+    plt.bar(sorted_bins, counts, color='blue', alpha=0.7, edgecolor='black')
 
-    plt.xlabel("Интервалы значений X")
+    plt.xlabel("Интервалы значений X (1-8)")
     plt.ylabel("Количество элементов")
-    plt.title("Гистограмма распределения данных")
+    plt.title("MapReduce: Гистограмма распределения от 1 до 8")
     plt.grid(axis='y', linestyle='--', alpha=0.6)
-
+    plt.xticks(rotation=45)
+    plt.tight_layout()
     plt.show()
 
 def plot_original_histogram(data):
     """
-    Строит гистограмму по исходным данным, вручную создавая интервалы
-    и подсчитывая их частоты.
+    Строит гистограмму по исходным данным, используя фиксированные интервалы от 1 до 8.
     """
-    # Читаем данные из CSV
-    # Обратите внимание, что предполагается, что данные находятся в колонке 'x_value'
     x_values = data['x_value'].tolist()
 
-    # Получаем минимальное и максимальное значения для данных
-    min_value = min(x_values)
-    max_value = max(x_values)
-
-    # Создаем интервалы с шагом 5
-    bins = []
-    start = int(min_value) // 5 * 5  # округление вниз до ближайшего кратного 5
-    end = (int(max_value) // 5 + 1) * 5  # округление вверх до ближайшего кратного 5
-
-    for i in range(start, end, 5):
-        bins.append((i, i + 5))
-
-    # Инициализируем гистограмму для подсчета частот
+    # Интервалы: [1,2), [2,3), ..., [8,9)
+    bins = [(i, i + 1) for i in range(1, 9)]
     hist = {f"{b[0]}-{b[1]}": 0 for b in bins}
 
-    # Подсчитываем количество элементов в каждом интервале
     for x in x_values:
         for b in bins:
             if b[0] <= x < b[1]:
                 hist[f"{b[0]}-{b[1]}"] += 1
-                break  # Если число попало в интервал, выходим из цикла
+                break
 
-    # Визуализация
+    sorted_bins = sorted(hist.keys(), key=lambda x: int(x.split('-')[0]))
+    counts = [hist[b] for b in sorted_bins]
+
     plt.figure(figsize=(8, 5))
-    plt.bar(hist.keys(), hist.values(), color='blue', alpha=0.7, edgecolor='black')
+    plt.bar(sorted_bins, counts, color='green', alpha=0.7, edgecolor='black')
 
-    plt.xlabel("Интервалы значений X")
+    plt.xlabel("Интервалы значений X (1-8)")
     plt.ylabel("Количество элементов")
-    plt.title("Гистограмма исходных данных")
+    plt.title("Исходная гистограмма данных от 1 до 8")
     plt.grid(axis='y', linestyle='--', alpha=0.6)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
     plt.show()
 
 if __name__ == "__main__":
-    ''' Тестовый пример
-    test_data = [
-        {"value": 10},
-        {"value": 20},
-        {"value": 30},
-        {"value": 40},
-        {"value": 50},
-        {"value": 60}
-    ]
-
-    print("Распределяем данные по Worker Node (стандартный пример)...")
-    responses = distribute_data(test_data)
-    print("Ответы от Worker Node:")
-    print(responses)
-
-    print("\nЗапуск стандартного MapReduce алгоритма...")
-    result = run_algorithm()
-    print("Результат Reduce-задачи:")
-    print(result)
-    '''
+    print("\nПодготовка: Отправка данных для Пункт 2...")
+    p2_data = pd.read_csv('p2.csv')['x_value'].tolist()
+    p2_send_result = send_p2_data_to_workers(p2_data)
+    print("Данные P2 отправлены:", p2_send_result)
 
     print("\nЗапуск задачи Пункт 2: выборочное среднее...")
     p2_result = p2_run()
     print("Результат задачи Пункт 2:")
     print(p2_result)
 
+    print("\nПодготовка: Отправка данных для Пункт 3...")
+    p3_data = pd.read_csv('p3.csv')['x_value'].tolist()
+    p3_send_result = send_p3_data_to_workers(p3_data)
+    print("Данные P3 отправлены:", p3_send_result)
+
     print("\nЗапуск задачи Пункт 3: гистограмма...")
     p3_result = p3_run()
     print("Результат задачи Пункт 3:")
     print(p3_result)
-    # Используем 'global_histogram_counts' для построения гистограммы из собранных результатов
+
+    # Построение MapReduce гистограммы
     plot_mapreduce_histogram(p3_result["global_histogram_counts"])
 
-    # Сверка с оригиналом
-    data = pd.read_csv('p3.csv')
-    plot_original_histogram(data)
+    # Сравнение с оригиналом
+    plot_original_histogram(pd.read_csv('p3.csv'))
+
+    print("\nПодготовка: Отправка данных для Пункт 4...")
+    p4_df = pd.read_csv('p4.csv')
+    p4_data = p4_df.to_dict(orient='records')
+    p4_send_result = send_p4_data_to_workers(p4_data)
+    print("Данные P4 отправлены:", p4_send_result)
+
+    print("\nЗапуск задачи Пункт 4: разность множеств S0 - S1...")
+    p4_result = p4_run()
+    print("Результат задачи Пункт 4 (разность S0 - S1):")
+    print(p4_result["difference"])
